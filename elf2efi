@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+usage() {
+    echo "Usage: $(basename $0) [options] <input> <output>"
+    echo "elf2efi - convert ELF to EFI"
+    echo
+    echo "Options:"
+    echo "  -h, --help            show this help message and exit"
+    echo
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+if [ $# -ne 2 ]; then
+    echo "Error: wrong number of arguments"
+    usage
+    exit 1
+fi
+
+input=$1
+output=$2
+
+if [ ! -f $input ]; then
+    echo "Error: input file $input does not exist"
+    exit 1
+fi
+
+objcopy -j .text -j .sdata -j .data -j .rodata -j .dynamic -j .dynsym  -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc --target efi-app-x86_64 --subsystem=10 $input $output $output

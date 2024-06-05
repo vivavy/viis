@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+
+VERSION="0.0.3-1"
+
+usage() {
+    echo "Usage: $(basename $0) [OPTIONS] SOURCE OUTPUT FS"
+    echo "dir2img -- create filesystem image from directory"
+    echo "Supported filesystem types: ext2, ext3, ext4, fat16 и fat32"
+    echo
+    echo "Arguments:"
+    echo "  SOURCE      source directory"
+    echo "  OUTPUT      name of the image file"
+    echo "  FS          filesystem type"
+    echo
+    echo "OPTIONS:"
+    echo "  -f          overwrite existing image file (if any)"
+    echo "  -h          show this message and exit"
+    echo
+    echo "dir2img v$VERSION"
+    echo "Copyright 2024 (c) Ivan Chetchasov <chetvano@gmail.com>"
+    echo "Some rights reserved."
+    echo
+    echo "This program is free software released under GNU GPLv3 license."
+    echo "See <http://www.gnu.org/licenses/> for more information."
+    echo
+}
+
+abs2rel() {
+    local target="$1"
+    local base="$2"
+    echo "${target#$base/}"
+}
+
+copyfiles() {
+    find "$1" -mindepth 1 -type d | while read dir; do
+        target=$(abs2rel "$dir" "$1")
+        [ -z "$target" ] && continue
+        mmd -i "$2" "::$target"
+    done
+    find "$1" -mindepth 1 -type f | while read file; do
+        target=$(abs2rel "$file" "$1")
+        mcopy -i "$2" "$file" "::$target"
+    done
+}
+
+
+dirsize() {
+    find "$1" -type f | xargs stat -c%s | awk '{s+=$1} END {print s}'
+}
+
+overwrite=0
+while getopts "fh" opt; do
+    case $opt in
+        f)
+            overwrite=1
+            ;;
+        h)
+            usage
+            exit 0
+            ;;
+        \?)
+            echo "Invalid option: -$OPTARG" >&2
+            exit 1
+            ;;
+    esac
+done
+shift $((OPTIND -1))
+
+DIR="$1"
+OUTPUT="$2"
+FS="$3"
+
+if [ -z "$DIR" ] || [ -z "$OUTPUT" ] || [ -z "$FS" ]; then
+    usage
+    echo "ERROR: missing arguments" >&2
+    exit 1
+fi
+
+if [ "$overwrite" -eq 1 ]; then
+    rm -f "$OUTPUT"
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to remove existing file $OUTPUT" >&2
+        exit 1
+    fi
+fi
+
+if [ -e "$OUTPUT" ]; then
+  echo "ERROR: $OUTPUT already exists. Aborting." >&2
+  exit 1
+fi
+
+case "$FS" in
+    ext2)
+        MKEXEC="mkfs.ext2"
+        ;;
+    ext3)
+        MKEXEC="mkfs.ext3"
+        ;;
+    ext4)
+        MKEXEC="mkfs.ext4"
+        ;;
+    fat16)
+        MKEXEC="mkfs.vfat -F 16"
+        ;;
+    fat32)
+        MKEXEC="mkfs.vfat"
+        ;;
+    *)
+        echo "ERROR: unknown filesystem type: $FS" >&2
+        exit 1
+        ;;
+esac
+
+SIZE=$(dirsize "$DIR") # get target size in bytes
+if [ -z "$SIZE" ]; then
+    echo "ERROR: Failed to calculate directory size" >&2
+    exit 1
+fi
+
+SIZE_KB=$(expr $SIZE / 1024) # convert to KB
+if [ -z "$SIZE_KB" ]; then
+    echo "ERROR: Failed to convert directory size to KB" >&2
+    exit 1
+fi
+
+SIZE_MB=$(expr $SIZE_KB / 1024) # convert to MB
+if [ -z "$SIZE_MB" ]; then
+    echo "ERROR: Failed to convert directory size to MB" >&2
+    exit 1
+fi
+
+SIZE_MB=$(expr $SIZE_MB + 1) # add 1 MB for padding
+if [ -z "$SIZE_MB" ]; then
+    echo "ERROR: Failed to add padding to directory size" >&2
+    exit 1
+fi
+
+if [ "$SIZE_MB" -lt 512 ]; then
+    SIZE_MB=512
+fi
+
+MAX_SIZE=$(expr 32 \* 1024)
+
+if [ "$SIZE_MB" -gt "$MAX_SIZE" ]; then
+    echo "ERROR: image size is too big" >&2
+    exit 1
+fi
+
+dd if=/dev/zero of="$OUTPUT" bs=1M count=$SIZE_MB > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to create image file with dd" >&2
+    exit 1
+fi
+$MKEXEC "$OUTPUT" > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    echo "ERROR: Failed to create filesystem with $MKEXEC" >&2
+    exit 1
+fi
+
+copyfiles "$DIR" "$OUTPUT"

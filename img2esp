@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+
+VERSION="0.0.3-1"
+
+usage() {
+    echo "Usage: $(basename $0) [OPTIONS] SOURCE OUTPUT"
+    echo "img2esp -- create EFI bootable disk image from fat32 disk image"
+    echo
+    echo "Arguments:"
+    echo "  SOURCE      input image file"
+    echo "  OUTPUT      output image file"
+    echo
+    echo "OPTIONS:"
+    echo "  -f          overwrite existing image file (if any)"
+    echo "  -h          show this message and exit"
+    echo
+    echo "img2esp v$VERSION"
+    echo "Copyright 2024 (c) Ivan Chetchasov <chetvano@gmail.com>"
+    echo "Some rights reserved."
+    echo
+    echo "This program is free software released under GNU GPLv3 license."
+    echo "See <http://www.gnu.org/licenses/> for more information."
+    echo
+}
+
+filesize() {
+    SIZE_BYTES=$(stat --printf="%s" "$1")
+    SIZE_KB=$((SIZE_BYTES / 1024))
+    SIZE_MB=$((SIZE_KB / 1024))
+    echo $SIZE_MB
+}
+
+overwrite=0
+
+while getopts "fh" opt; do
+    case $opt in
+        f)
+            overwrite=1
+            ;;
+        h)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $opt"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+if [ $# -ne 2 ]; then
+    echo "Error: wrong number of arguments"
+    usage
+    exit 1
+fi
+
+source=$1
+output=$2
+
+if [ -f $output ]; then
+    if [ $overwrite -eq 0 ]; then
+        echo "Error: output file $output already exists"
+        exit 1
+    fi
+fi
+
+# check if source file exists
+if [ ! -f $source ]; then
+    echo "Error: source file $source does not exist"
+    exit 1
+fi
+
+# check if source file is a regular file
+if [ ! -f $source ]; then
+    echo "Error: source file $source is not a regular file"
+    exit 1
+fi
+
+# check if output file exists and remove it if flag is set
+if [ -f $output ]; then
+    if [ $overwrite -eq 1 ]; then
+        rm $output
+    else
+        echo "Error: output file $output already exists"
+        exit 1
+    fi
+fi
+
+# get size of source file
+SIZE=$(filesize $source)
+
+# create output file (size of source file + 8 MiB)
+dd if=/dev/zero of=$output bs=1M count=$((SIZE + 8))
+
+# create partition table
+echo "n
+p
+1
+
+ef00
+t
+w
+y
+" | fdisk $output
+
+# copy source file to output file
+dd if=$source of=$output bs=512 conv=notrunc seek=2048
